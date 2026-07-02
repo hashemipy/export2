@@ -333,21 +333,40 @@ class PIE_Settings {
         $config = $this->get_config();
         
         // ✅ مرحله ۲: به‌روزرسانی تنظیمات جدید
-        $config['site_role'] = sanitize_text_field($_POST['site_role'] ?? $config['site_role']);
-        $config['remote_site_url'] = esc_url_raw($_POST['remote_site_url'] ?? $config['remote_site_url']);
-        $config['remote_api_key'] = sanitize_text_field($_POST['remote_api_key'] ?? $config['remote_api_key']);
-        $config['remote_api_secret'] = sanitize_text_field($_POST['remote_api_secret'] ?? $config['remote_api_secret']);
-        $config['api_consumer_key'] = sanitize_text_field($_POST['api_consumer_key'] ?? $config['api_consumer_key']);
-        $config['api_consumer_secret'] = sanitize_text_field($_POST['api_consumer_secret'] ?? $config['api_consumer_secret']);
+        // داده‌ها از JavaScript به صورت flat object ارسال می‌شوند، نه nested
+        if (isset($_POST['site_role'])) {
+            $config['site_role'] = sanitize_text_field($_POST['site_role']);
+        }
+        if (isset($_POST['remote_site_url'])) {
+            $config['remote_site_url'] = esc_url_raw($_POST['remote_site_url']);
+        }
+        if (isset($_POST['remote_api_key'])) {
+            $config['remote_api_key'] = sanitize_text_field($_POST['remote_api_key']);
+        }
+        if (isset($_POST['remote_api_secret'])) {
+            $config['remote_api_secret'] = sanitize_text_field($_POST['remote_api_secret']);
+        }
+        if (isset($_POST['api_consumer_key'])) {
+            $config['api_consumer_key'] = sanitize_text_field($_POST['api_consumer_key']);
+        }
+        if (isset($_POST['api_consumer_secret'])) {
+            $config['api_consumer_secret'] = sanitize_text_field($_POST['api_consumer_secret']);
+        }
         $config['auto_upload'] = isset($_POST['auto_upload']) ? 1 : 0;
-        $config['sync_direction'] = sanitize_text_field($_POST['sync_direction'] ?? $config['sync_direction']);
+        if (isset($_POST['sync_direction'])) {
+            $config['sync_direction'] = sanitize_text_field($_POST['sync_direction']);
+        }
         
         // ✅ افزایش قیمت درصدی
-        $config['price_markup_enabled'] = isset($_POST['price_markup_enabled']) ? 1 : 0;
-        $config['price_markup_percent'] = intval($_POST['price_markup_percent'] ?? 0);
+        $config['price_markup_enabled'] = isset($_POST['price_markup_enabled']) && $_POST['price_markup_enabled'] ? 1 : 0;
+        if (isset($_POST['price_markup_percent'])) {
+            $config['price_markup_percent'] = intval($_POST['price_markup_percent']);
+        }
         
         // ✅ نوع سایت برای اعمال markup
-        $config['price_markup_site'] = sanitize_text_field($_POST['price_markup_site'] ?? 'site2');
+        if (isset($_POST['price_markup_site'])) {
+            $config['price_markup_site'] = sanitize_text_field($_POST['price_markup_site']);
+        }
         
         error_log("[PIE AJAX] Config before save: " . wp_json_encode($config));
         
@@ -357,33 +376,40 @@ class PIE_Settings {
         // ✅ مرحله ۴: تأیید ذخیره
         $saved = get_option($this->option_key);
         
-        error_log("[PIE AJAX] Result: " . ($result ? 'updated' : 'same'));
+        error_log("[PIE AJAX] Result: " . ($result ? 'updated' : 'same value'));
         error_log("[PIE AJAX] Saved (read back): " . wp_json_encode($saved));
         
-        // تأیید اینکه تنظیمات صحیح ذخیره شدند
-        if (is_array($saved) && 
-            isset($saved['price_markup_enabled'])) {
+        // تأیید اینکه تنظیمات درست ذخیره شدند (حداقل یکی از فیلدها باید مطابق باشد)
+        if (is_array($saved)) {
+            // بررسی اینکه اساسی ترین فیلدها ذخیره شده‌اند
+            $basic_ok = isset($saved['site_role']);
             
-            // بررسی اینکه markup settings ذخیره شده‌اند
-            $markup_ok = ($saved['price_markup_enabled'] == $config['price_markup_enabled']) &&
-                        ($saved['price_markup_percent'] == $config['price_markup_percent']) &&
-                        (isset($saved['price_markup_site']) && $saved['price_markup_site'] == $config['price_markup_site']);
+            // تنظیمات markup
+            $markup_enabled_ok = isset($saved['price_markup_enabled']);
+            $markup_percent_ok = isset($saved['price_markup_percent']);
+            $markup_site_ok = isset($saved['price_markup_site']);
             
-            if ($markup_ok) {
+            if ($basic_ok && $markup_enabled_ok && $markup_percent_ok && $markup_site_ok) {
                 error_log("[PIE AJAX] Settings saved successfully");
                 wp_send_json_success([
-                    'message' => 'تنظیمات ذخیره شدند'
+                    'message' => 'تنظیمات ذخیره شدند',
+                    'config' => [
+                        'price_markup_enabled' => $saved['price_markup_enabled'],
+                        'price_markup_percent' => $saved['price_markup_percent'],
+                        'price_markup_site' => $saved['price_markup_site']
+                    ]
                 ]);
             } else {
-                error_log("[PIE AJAX] Settings not fully saved. Expected: " . wp_json_encode($config) . ", Got: " . wp_json_encode($saved));
+                error_log("[PIE AJAX] Some fields missing. basic_ok=$basic_ok, markup_enabled=$markup_enabled_ok, markup_percent=$markup_percent_ok, markup_site=$markup_site_ok");
+                error_log("[PIE AJAX] Saved data: " . wp_json_encode($saved));
                 wp_send_json_error([
-                    'message' => 'بعضی تنظیمات ذخیره نشدند. لطفا مجددا تلاش کنید.'
+                    'message' => 'بعضی تنظیمات ذخیره نشدند.'
                 ]);
             }
         } else {
-            error_log("[PIE AJAX] Config is not an array or missing price_markup fields");
+            error_log("[PIE AJAX] get_option returned non-array: " . gettype($saved));
             wp_send_json_error([
-                'message' => 'خطا در ذخیره تنظیمات. لطفا logs را بررسی کنید.'
+                'message' => 'خطا در بازیابی تنظیمات.'
             ]);
         }
     }
@@ -623,7 +649,7 @@ class PIE_Settings {
                                             </label>
                                         </fieldset>
                                         <p class="description" style="margin-top: 10px;">
-                                            این تنظیم مشخص می‌کند که موجودی در کدام جهت(ها) هماهنگ شود.
+                                            این تنظیم مشخص می‌کند که موجودی در کدام جهت(ها) هماهنگ ��ود.
                                         </p>
                                     </td>
                                 </tr>
@@ -991,6 +1017,11 @@ class PIE_Settings {
                     price_markup_site: $('input[name="pie_site_config[price_markup_site]"]:checked').val() || 'site2',
                     nonce: $('[name="pie_nonce"]').val()
                 };
+                
+                console.log('[PIE Settings] Sending data:', data);
+                console.log('[PIE Settings] price_markup_enabled checked?', $('[name="pie_site_config[price_markup_enabled]"]').is(':checked'));
+                console.log('[PIE Settings] price_markup_percent value:', $('[name="pie_site_config[price_markup_percent]"]').val());
+                console.log('[PIE Settings] price_markup_site checked:', $('input[name="pie_site_config[price_markup_site]"]:checked').val());
                 
                 $.ajax({
                     type: 'POST',

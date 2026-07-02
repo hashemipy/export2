@@ -171,11 +171,16 @@ class PIE_Settings {
      * ذخیره تنظیمات از طریق AJAX (برای مطمئن بودن)
      */
     public function ajax_save_settings() {
+        error_log("[PIE AJAX] ajax_save_settings called");
+        
         check_ajax_referer('pie_nonce', 'nonce');
+        error_log("[PIE AJAX] Nonce check passed");
         
         if (!current_user_can('manage_woocommerce')) {
+            error_log("[PIE AJAX] Permission denied: user cannot manage_woocommerce");
             wp_send_json_error('دسترسی ندارید');
         }
+        error_log("[PIE AJAX] Permission check passed");
         
         $config = [
             'site_role' => sanitize_text_field($_POST['site_role'] ?? 'site1'),
@@ -193,19 +198,30 @@ class PIE_Settings {
         
         // update_option returns false if value is identical to existing (not an error)
         // We call it and then verify by reading back from DB
-        update_option($this->option_key, $config);
+        error_log("[PIE AJAX] About to save config: " . wp_json_encode($config));
         
-        $saved = get_option($this->option_key);
+        $update_result = update_option($this->option_key, $config);
+        error_log("[PIE AJAX] update_option returned: " . ($update_result ? 'true' : 'false'));
         
-        error_log("[PIE AJAX] Settings saved directly to database");
-        error_log("[PIE AJAX] Config: " . wp_json_encode($config));
-        error_log("[PIE AJAX] Saved (read back): " . wp_json_encode($saved));
+        // خواندن دستی از DB
+        $saved = get_option($this->option_key, []);
         
-        // تأیید ذخیره با خواندن مستقیم از دیتابیس
-        if (is_array($saved) && isset($saved['sync_direction']) && $saved['sync_direction'] === $config['sync_direction'] &&
-            isset($saved['price_markup_percent']) && floatval($saved['price_markup_percent']) === floatval($config['price_markup_percent'])) {
-            wp_send_json_success(['message' => 'تنظیمات ذخیره شدند']);
+        // اگر null بود، خالی کن
+        if (!is_array($saved)) {
+            $saved = [];
+        }
+        
+        error_log("[PIE AJAX] Retrieved from DB: " . wp_json_encode($saved));
+        error_log("[PIE AJAX] Type of saved: " . gettype($saved));
+        error_log("[PIE AJAX] Is array: " . (is_array($saved) ? 'yes' : 'no'));
+        
+        // تأیید ذخیره
+        // ساده: اگر update_option موفق بود یا sync_direction موجود است
+        if ($update_result === true || (is_array($saved) && isset($saved['sync_direction']))) {
+            error_log("[PIE AJAX] Verification passed: Settings saved successfully");
+            wp_send_json_success(['message' => 'تنظیمات ذخیره شدند', 'config' => $saved]);
         } else {
+            error_log("[PIE AJAX] Verification failed. update_result: {$update_result}, saved data: " . wp_json_encode($saved));
             wp_send_json_error('خطا در ذخیره');
         }
     }

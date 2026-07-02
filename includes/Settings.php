@@ -324,8 +324,10 @@ class PIE_Settings {
         check_ajax_referer('pie_nonce', 'nonce');
         
         if (!current_user_can('manage_woocommerce')) {
-            wp_send_json_error('دسترسی ندارید');
+            wp_send_json_error(['message' => 'دسترسی ندارید']);
         }
+        
+        error_log("[PIE AJAX] POST data received: " . wp_json_encode($_POST));
         
         // ✅ مرحله ۱: بدست آوردن تنظیمات موجود
         $config = $this->get_config();
@@ -360,24 +362,34 @@ class PIE_Settings {
         
         // تأیید اینکه تنظیمات صحیح ذخیره شدند
         if (is_array($saved) && 
-            isset($saved['price_markup_enabled']) && 
-            $saved['price_markup_enabled'] == $config['price_markup_enabled'] &&
-            $saved['price_markup_percent'] == $config['price_markup_percent']) {
-            wp_send_json_success([
-                'message' => 'تنظیمات ذخیره شدند',
-                'config' => $saved
-            ]);
+            isset($saved['price_markup_enabled'])) {
+            
+            // بررسی اینکه markup settings ذخیره شده‌اند
+            $markup_ok = ($saved['price_markup_enabled'] == $config['price_markup_enabled']) &&
+                        ($saved['price_markup_percent'] == $config['price_markup_percent']) &&
+                        (isset($saved['price_markup_site']) && $saved['price_markup_site'] == $config['price_markup_site']);
+            
+            if ($markup_ok) {
+                error_log("[PIE AJAX] Settings saved successfully");
+                wp_send_json_success([
+                    'message' => 'تنظیمات ذخیره شدند'
+                ]);
+            } else {
+                error_log("[PIE AJAX] Settings not fully saved. Expected: " . wp_json_encode($config) . ", Got: " . wp_json_encode($saved));
+                wp_send_json_error([
+                    'message' => 'بعضی تنظیمات ذخیره نشدند. لطفا مجددا تلاش کنید.'
+                ]);
+            }
         } else {
+            error_log("[PIE AJAX] Config is not an array or missing price_markup fields");
             wp_send_json_error([
-                'message' => 'خطا در ذخیره تنظیمات',
-                'expected' => $config,
-                'saved' => $saved
+                'message' => 'خطا در ذخیره تنظیمات. لطفا logs را بررسی کنید.'
             ]);
         }
     }
     
     /**
-     * ثبت تنظیمات WordPress
+     * ��بت تنظیمات WordPress
      */
     public function register_settings() {
         register_setting('pie_site_settings', $this->option_key, [
@@ -595,7 +607,7 @@ class PIE_Settings {
                                                 <input type="radio" name="<?php echo esc_attr($this->option_key); ?>[sync_direction]" 
                                                        value="s1_to_s2"
                                                        <?php checked($config['sync_direction'] ?? 'bidirectional', 's1_to_s2'); ?>>
-                                                <strong>فقط سایت ۱ → سایت ۲</strong>
+                                                <strong>فق�� سایت ۱ → سایت ۲</strong>
                                                 <span style="display: block; margin-right: 26px; color: #666; font-size: 12px;">
                                                     تغییرات موجودی تنها از سایت ۱ به ۲ اعمال می‌شود
                                                 </span>
@@ -987,15 +999,24 @@ class PIE_Settings {
                     success: function(response) {
                         $('#save-settings-btn').prop('disabled', false).text('💾 ذخیره تنظیمات');
                         if (response.success) {
-                            alert('تنظیمات با موفقیت ذخیره شدند!');
+                            alert('✓ تنظیمات با موفقیت ذخیره شدند!');
                             location.reload();
                         } else {
-                            alert('خطا: ' + response.data);
+                            // response.data میتواند string یا object باشد
+                            let errorMsg = response.data;
+                            if (typeof response.data === 'object' && response.data.message) {
+                                errorMsg = response.data.message;
+                            } else if (typeof response.data === 'object') {
+                                errorMsg = JSON.stringify(response.data);
+                            }
+                            console.error('[PIE Settings Error]', response.data);
+                            alert('✗ خطا: ' + errorMsg);
                         }
                     },
-                    error: function() {
+                    error: function(xhr, status, error) {
                         $('#save-settings-btn').prop('disabled', false).text('💾 ذخیره تنظیمات');
-                        alert('خطای شبکه');
+                        console.error('[PIE AJAX Error]', xhr.responseText);
+                        alert('✗ خطای شبکه: ' + error);
                     }
                 });
             });

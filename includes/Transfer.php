@@ -324,6 +324,7 @@ class PIE_Transfer {
             
             // ✅ اعمال درصد افزایش قیمت (اگر تنظیم شده باشد)
             $markup_percent = floatval($config['price_markup_percent'] ?? 0);
+            
             if ($markup_percent > 0) {
                 foreach ($product_data as &$prod) {
                     $prod = $this->apply_markup_to_product_data($prod, $markup_percent);
@@ -728,7 +729,7 @@ class PIE_Transfer {
     }
     
     /**
-     * دانلود و ضمیمه تصویر
+     * دانل��د و ضمیمه تصویر
      */
     private function download_and_attach_image($url, $product_id, $featured = false) {
         require_once ABSPATH . 'wp-admin/includes/file.php';

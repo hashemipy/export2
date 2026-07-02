@@ -171,16 +171,11 @@ class PIE_Settings {
      * ذخیره تنظیمات از طریق AJAX (برای مطمئن بودن)
      */
     public function ajax_save_settings() {
-        error_log("[PIE AJAX] ajax_save_settings called");
-        
         check_ajax_referer('pie_nonce', 'nonce');
-        error_log("[PIE AJAX] Nonce check passed");
         
         if (!current_user_can('manage_woocommerce')) {
-            error_log("[PIE AJAX] Permission denied: user cannot manage_woocommerce");
             wp_send_json_error('دسترسی ندارید');
         }
-        error_log("[PIE AJAX] Permission check passed");
         
         $config = [
             'site_role' => sanitize_text_field($_POST['site_role'] ?? 'site1'),
@@ -198,30 +193,26 @@ class PIE_Settings {
         
         // update_option returns false if value is identical to existing (not an error)
         // We call it and then verify by reading back from DB
-        error_log("[PIE AJAX] About to save config: " . wp_json_encode($config));
-        
         $update_result = update_option($this->option_key, $config);
-        error_log("[PIE AJAX] update_option returned: " . ($update_result ? 'true' : 'false'));
         
         // خواندن دستی از DB
         $saved = get_option($this->option_key, []);
+        
+        // اگر serialized string است، unserialize کن
+        if (is_string($saved)) {
+            $saved = maybe_unserialize($saved);
+        }
         
         // اگر null بود، خالی کن
         if (!is_array($saved)) {
             $saved = [];
         }
         
-        error_log("[PIE AJAX] Retrieved from DB: " . wp_json_encode($saved));
-        error_log("[PIE AJAX] Type of saved: " . gettype($saved));
-        error_log("[PIE AJAX] Is array: " . (is_array($saved) ? 'yes' : 'no'));
-        
         // تأیید ذخیره
         // ساده: اگر update_option موفق بود یا sync_direction موجود است
         if ($update_result === true || (is_array($saved) && isset($saved['sync_direction']))) {
-            error_log("[PIE AJAX] Verification passed: Settings saved successfully");
-            wp_send_json_success(['message' => 'تنظیمات ذخیره شدند', 'config' => $saved]);
+            wp_send_json_success(['message' => 'تنظیمات ذخیره شدند']);
         } else {
-            error_log("[PIE AJAX] Verification failed. update_result: {$update_result}, saved data: " . wp_json_encode($saved));
             wp_send_json_error('خطا در ذخیره');
         }
     }
@@ -481,7 +472,7 @@ class PIE_Settings {
                                         <fieldset style="display: flex; align-items: center; gap: 10px;">
                                             <input type="number" 
                                                    id="price_markup_percent"
-                                                   name="price_markup_percent" 
+                                                   name="<?php echo esc_attr($this->option_key); ?>[price_markup_percent]" 
                                                    value="<?php echo esc_attr($config['price_markup_percent'] ?? 0); ?>"
                                                    min="0"
                                                    max="100"
@@ -708,7 +699,7 @@ class PIE_Settings {
                     api_consumer_secret: $('[name="pie_site_config[api_consumer_secret]"]').val(),
                     auto_upload: $('[name="pie_site_config[auto_upload]"]').is(':checked') ? 1 : 0,
                     sync_direction: $('input[name="pie_site_config[sync_direction]"]:checked').val() || 'bidirectional',
-                    price_markup_percent: $('[name="price_markup_percent"]').val() || 0,
+                    price_markup_percent: $('[name="pie_site_config[price_markup_percent]"]').val() || 0,
                     nonce: $('[name="pie_nonce"]').val()
                 };
                 
@@ -818,7 +809,26 @@ class PIE_Settings {
         ];
         
         $config = get_option($this->option_key, []);
-        return wp_parse_args($config, $default);
+        
+        // اگر $config string است (serialized)، آن را unserialize کن
+        if (is_string($config)) {
+            $config = maybe_unserialize($config);
+        }
+        
+        // اگر همچنان array نیست، خالی کن
+        if (!is_array($config)) {
+            $config = [];
+        }
+        
+        // ترجمه array با defaults
+        $merged = wp_parse_args($config, $default);
+        
+        // مطمئن شو که price_markup_percent float است
+        if (isset($merged['price_markup_percent'])) {
+            $merged['price_markup_percent'] = floatval($merged['price_markup_percent']);
+        }
+        
+        return $merged;
     }
     
     /**

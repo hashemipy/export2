@@ -327,36 +327,52 @@ class PIE_Settings {
             wp_send_json_error('دسترسی ندارید');
         }
         
-        $config = [
-            'site_role' => sanitize_text_field($_POST['site_role'] ?? 'site1'),
-            'remote_site_url' => esc_url_raw($_POST['remote_site_url'] ?? ''),
-            'remote_api_key' => sanitize_text_field($_POST['remote_api_key'] ?? ''),
-            'remote_api_secret' => sanitize_text_field($_POST['remote_api_secret'] ?? ''),
-            'api_consumer_key' => sanitize_text_field($_POST['api_consumer_key'] ?? ''),
-            'api_consumer_secret' => sanitize_text_field($_POST['api_consumer_secret'] ?? ''),
-            'auto_upload' => isset($_POST['auto_upload']) ? 1 : 0,
-            // ✅ مسئله ۲: جهت sync (دوطرفه، یک‌طرفه ۱→۲، یا یک‌طرفه ۲→۱)
-            'sync_direction' => sanitize_text_field($_POST['sync_direction'] ?? 'bidirectional'),
-            // ✅ افزایش قیمت درصدی
-            'price_markup_enabled' => isset($_POST['price_markup_enabled']) ? 1 : 0,
-            'price_markup_percent' => intval($_POST['price_markup_percent'] ?? 0)
-        ];
+        // ✅ مرحله ۱: بدست آوردن تنظیمات موجود
+        $config = $this->get_config();
         
-        // update_option returns false if value is identical to existing (not an error)
-        // We call it and then verify by reading back from DB
-        update_option($this->option_key, $config);
+        // ✅ مرحله ۲: به‌روزرسانی تنظیمات جدید
+        $config['site_role'] = sanitize_text_field($_POST['site_role'] ?? $config['site_role']);
+        $config['remote_site_url'] = esc_url_raw($_POST['remote_site_url'] ?? $config['remote_site_url']);
+        $config['remote_api_key'] = sanitize_text_field($_POST['remote_api_key'] ?? $config['remote_api_key']);
+        $config['remote_api_secret'] = sanitize_text_field($_POST['remote_api_secret'] ?? $config['remote_api_secret']);
+        $config['api_consumer_key'] = sanitize_text_field($_POST['api_consumer_key'] ?? $config['api_consumer_key']);
+        $config['api_consumer_secret'] = sanitize_text_field($_POST['api_consumer_secret'] ?? $config['api_consumer_secret']);
+        $config['auto_upload'] = isset($_POST['auto_upload']) ? 1 : 0;
+        $config['sync_direction'] = sanitize_text_field($_POST['sync_direction'] ?? $config['sync_direction']);
         
+        // ✅ افزایش قیمت درصدی
+        $config['price_markup_enabled'] = isset($_POST['price_markup_enabled']) ? 1 : 0;
+        $config['price_markup_percent'] = intval($_POST['price_markup_percent'] ?? 0);
+        
+        // ✅ نوع سایت برای اعمال markup
+        $config['price_markup_site'] = sanitize_text_field($_POST['price_markup_site'] ?? 'site2');
+        
+        error_log("[PIE AJAX] Config before save: " . wp_json_encode($config));
+        
+        // ✅ مرحله ۳: ذخیره در دیتابیس
+        $result = update_option($this->option_key, $config);
+        
+        // ✅ مرحله ۴: تأیید ذخیره
         $saved = get_option($this->option_key);
         
-        error_log("[PIE AJAX] Settings saved directly to database");
-        error_log("[PIE AJAX] Config: " . wp_json_encode($config));
+        error_log("[PIE AJAX] Result: " . ($result ? 'updated' : 'same'));
         error_log("[PIE AJAX] Saved (read back): " . wp_json_encode($saved));
         
-        // تأیید ذخیره با خواندن مستقیم از دیتابیس
-        if (is_array($saved) && isset($saved['sync_direction']) && $saved['sync_direction'] === $config['sync_direction']) {
-            wp_send_json_success(['message' => 'تنظیمات ذخیره شدند']);
+        // تأیید اینکه تنظیمات صحیح ذخیره شدند
+        if (is_array($saved) && 
+            isset($saved['price_markup_enabled']) && 
+            $saved['price_markup_enabled'] == $config['price_markup_enabled'] &&
+            $saved['price_markup_percent'] == $config['price_markup_percent']) {
+            wp_send_json_success([
+                'message' => 'تنظیمات ذخیره شدند',
+                'config' => $saved
+            ]);
         } else {
-            wp_send_json_error('خطا در ذخیره');
+            wp_send_json_error([
+                'message' => 'خطا در ذخیره تنظیمات',
+                'expected' => $config,
+                'saved' => $saved
+            ]);
         }
     }
     
@@ -650,6 +666,34 @@ class PIE_Settings {
                                     </td>
                                 </tr>
                                 
+                                <tr>
+                                    <th scope="row">
+                                        <label for="price_markup_site">اعمال افزایش قیمت در کدام سایت؟</label>
+                                    </th>
+                                    <td>
+                                        <fieldset>
+                                            <label style="display: block; margin-bottom: 10px;">
+                                                <input type="radio" 
+                                                       name="<?php echo esc_attr($this->option_key); ?>[price_markup_site]" 
+                                                       value="site1"
+                                                       <?php checked(($config['price_markup_site'] ?? 'site2'), 'site1'); ?>>
+                                                <strong>سایت ۱</strong> - وقتی محصول از سایت ۱ ارسال می‌شود، قیمت افزایش یابد
+                                            </label>
+                                            <label style="display: block; margin-bottom: 10px;">
+                                                <input type="radio" 
+                                                       name="<?php echo esc_attr($this->option_key); ?>[price_markup_site]" 
+                                                       value="site2"
+                                                       <?php checked(($config['price_markup_site'] ?? 'site2'), 'site2'); ?>>
+                                                <strong>سایت ۲</strong> - وقتی محصول به سایت ۲ منتقل می‌شود، قیمت افزایش یابد
+                                            </label>
+                                        </fieldset>
+                                        <p class="description" style="margin-top: 10px;">
+                                            اگر سایت ۱ انتخاب کنید: قیمت قبل از ارسال افزایش می‌یابد<br>
+                                            اگر سایت ۲ انتخاب کنید: قیمت هنگام دریافت در سایت ۲ افزایش می‌یابد (توصیه‌شده)
+                                        </p>
+                                    </td>
+                                </tr>
+                                
                                 <tr style="border-top: 2px solid #ddd;">
                                     <th colspan="2" style="padding: 20px 0 10px;">
                                         <h3 style="margin: 0;">⚡ تنظیمات خودکار</h3>
@@ -932,6 +976,7 @@ class PIE_Settings {
                     // ✅ افزایش قیمت درصدی
                     price_markup_enabled: $('[name="pie_site_config[price_markup_enabled]"]').is(':checked') ? 1 : 0,
                     price_markup_percent: parseInt($('[name="pie_site_config[price_markup_percent]"]').val()) || 0,
+                    price_markup_site: $('input[name="pie_site_config[price_markup_site]"]:checked').val() || 'site2',
                     nonce: $('[name="pie_nonce"]').val()
                 };
                 
@@ -1068,7 +1113,7 @@ class PIE_Settings {
                     url: '<?php echo admin_url('admin-ajax.php'); ?>',
                     data: data,
                     success: function(response) {
-                        $btn.prop('disabled', false).text('💾 اعمال تغییر قیمت');
+                        $btn.prop('disabled', false).text('💾 ا��مال تغییر قیمت');
                         
                         if (response.success) {
                             let msg = response.data.message;
@@ -1112,7 +1157,8 @@ class PIE_Settings {
             'sync_direction' => 'bidirectional',
             // ✅ افزایش قیمت درصدی - پیش‌فرض disabled
             'price_markup_enabled' => 0,
-            'price_markup_percent' => 0
+            'price_markup_percent' => 0,
+            'price_markup_site' => 'site2'
         ];
         
         $config = get_option($this->option_key, []);

@@ -349,13 +349,17 @@ class PIE_API {
             
             error_log("[PIE API] Product JSON received: {$json_data['name']} (has attributes: " . (isset($json_data['attributes']) ? count($json_data['attributes']) : 0) . ", variations: " . (isset($json_data['variations']) ? count($json_data['variations']) : 0) . ")");
             
-            // ✅ اعمال افزایش قیمت درصدی (اگر فعال باشد)
+            // ✅ اعمال افزایش قیمت درصدی (اگر فعال باشد و سایت صحیح باشد)
             $transfer = PIE_Transfer::get_instance();
             $config = $this->settings->get_config();
             
-            if ($config['price_markup_enabled'] && $config['price_markup_percent'] > 0) {
+            // بررسی شرایط: enabled + درصد معتبر + سایت site2 باشد
+            if ($config['price_markup_enabled'] && 
+                $config['price_markup_percent'] > 0 && 
+                ($config['price_markup_site'] ?? 'site2') === 'site2') {
+                
                 $json_data = $transfer->apply_price_markup($json_data, $config['price_markup_percent']);
-                error_log("[PIE API] Price markup applied: {$config['price_markup_percent']}% to {$json_data['name']}");
+                error_log("[PIE API] Price markup {$config['price_markup_percent']}% applied in site2 to: {$json_data['name']}");
             }
             
             // ⭐ مستقیماً import کن - دقیقاً مثل فایل JSON آپلود شده
@@ -396,15 +400,18 @@ class PIE_API {
                 $products = [$products];
             }
             
-            // ✅ اعمال افزایش قیمت درصدی (اگر فعال باشد)
+            // ✅ اعمال افزایش قیمت درصدی (اگر فعال باشد و سایت صحیح باشد)
             $config = $this->settings->get_config();
-            if ($config['price_markup_enabled'] && $config['price_markup_percent'] > 0) {
+            if ($config['price_markup_enabled'] && 
+                $config['price_markup_percent'] > 0 && 
+                ($config['price_markup_site'] ?? 'site2') === 'site2') {
+                
                 $transfer = PIE_Transfer::get_instance();
                 foreach ($products as &$product) {
                     $product = $transfer->apply_price_markup($product, $config['price_markup_percent']);
                 }
                 unset($product); // خروج از reference
-                error_log("[PIE API] Price markup applied in preview: {$config['price_markup_percent']}%");
+                error_log("[PIE API] Price markup {$config['price_markup_percent']}% applied in site2 preview");
             }
             
             $plugin = Product_Import_Export::get_instance();

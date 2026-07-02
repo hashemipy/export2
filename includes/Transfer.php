@@ -158,7 +158,7 @@ class PIE_Transfer {
                 $s1_variation = wc_get_product($s1_var_id);
                 if (!$s1_variation) continue;
 
-                // روش ۱: کلید دقیق id_<s1_variation_id>
+                // روش ۱: کلی�� دقیق id_<s1_variation_id>
                 $s2_var_id = $s2_variation_ids['id_' . $s1_var_id] ?? null;
 
                 // روش ۲ (fallback): تطبیق بر اساس SKU
@@ -318,6 +318,18 @@ class PIE_Transfer {
             $product_data = $plugin->get_products_for_export_public([$product_id]);
             if (empty($product_data)) {
                 return ['success' => false, 'error' => 'داده محصول خالی است', 'error_code' => 'EMPTY_EXPORT'];
+            }
+            
+            // ✅ اعمال افزایش قیمت درصدی (اگر سایت ۱ انتخاب شده باشد)
+            if ($config['price_markup_enabled'] && 
+                $config['price_markup_percent'] > 0 && 
+                ($config['price_markup_site'] ?? 'site2') === 'site1') {
+                
+                // product_data یک آرایه است، پس اولین عنصر را استخراج کن
+                if (isset($product_data[0])) {
+                    $product_data[0] = $this->apply_price_markup($product_data[0], $config['price_markup_percent']);
+                    error_log("[PIE] Price markup {$config['price_markup_percent']}% applied in site1 before sending: " . $product->get_name());
+                }
             }
             
             // URL Endpoint - استفاده از preview برای نمایش کاربر

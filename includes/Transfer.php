@@ -796,6 +796,54 @@ class PIE_Transfer {
             wp_send_json_error($result['error']);
         }
     }
+    
+    /**
+     * اعمال افزایش قیمت درصدی بر روی داده‌های محصول
+     * 
+     * @param array $product_data اطلاعات محصول
+     * @param float $markup_percent درصد افزایش (مثل 20 برای 20%)
+     * @return array محصول با قیمت‌های افزایش‌یافته
+     */
+    public function apply_price_markup($product_data, $markup_percent) {
+        // اگر markup درصد 0 یا منفی باشد، تغییری ندهیم
+        if (!$markup_percent || $markup_percent <= 0) {
+            return $product_data;
+        }
+        
+        // تبدیل درصد به ضریب (20 → 1.20)
+        $markup_multiplier = 1 + ($markup_percent / 100);
+        
+        // اعمال بر روی قیمت اصلی
+        if (!empty($product_data['regular_price'])) {
+            $original_price = floatval($product_data['regular_price']);
+            $product_data['regular_price'] = round($original_price * $markup_multiplier, 2);
+        }
+        
+        // اعمال بر روی قیمت فروش (اگر موجود و پایین‌تر از اصلی نباشد)
+        if (!empty($product_data['sale_price'])) {
+            $original_sale = floatval($product_data['sale_price']);
+            $product_data['sale_price'] = round($original_sale * $markup_multiplier, 2);
+        }
+        
+        // اعمال بر روی تمام variations
+        if (!empty($product_data['variations']) && is_array($product_data['variations'])) {
+            foreach ($product_data['variations'] as &$variation) {
+                // قیمت اصلی variation
+                if (!empty($variation['regular_price'])) {
+                    $original = floatval($variation['regular_price']);
+                    $variation['regular_price'] = round($original * $markup_multiplier, 2);
+                }
+                
+                // قیمت فروش variation
+                if (!empty($variation['sale_price'])) {
+                    $original_sale = floatval($variation['sale_price']);
+                    $variation['sale_price'] = round($original_sale * $markup_multiplier, 2);
+                }
+            }
+        }
+        
+        return $product_data;
+    }
 }
 
 // فعال‌سازی

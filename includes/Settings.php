@@ -27,6 +27,8 @@ class PIE_Settings {
         add_action('wp_ajax_pie_delete_api_key', [$this, 'ajax_delete_api_key']);
         add_action('wp_ajax_pie_get_pending_products', [$this, 'ajax_get_pending_products']);
         add_action('wp_ajax_pie_approve_pending_products', [$this, 'ajax_approve_pending_products']);
+        // ✅ تغییر قیمت محصولات موجود
+        add_action('wp_ajax_pie_update_existing_product_prices', [$this, 'ajax_update_existing_product_prices']);
     }
     
     /**
@@ -168,6 +170,154 @@ class PIE_Settings {
     }
     
     /**
+     * AJAX: تغییر قیمت محصولات موجود بر اساس افزایش درصدی جدید
+     * 
+     * @since 1.5.0
+     */
+    public function ajax_update_existing_product_prices() {
+        check_ajax_referer('pie_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'دسترسی ندارید']);
+        }
+        
+        $config = $this->get_config();
+        $markup_percent = intval($_POST['markup_percent'] ?? 0);
+        $product_ids = isset($_POST['product_ids']) ? (array) $_POST['product_ids'] : [];
+        $category_ids = isset($_POST['category_ids']) ? (array) $_POST['category_ids'] : [];
+        
+        // اگر نه product_ids نه category_ids وارد شود، تمام محصولات منتقل‌شده را update کن
+        $args = [
+            'post_type' => ['product'],
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+            'meta_query' => [
+                [
+                    'key' => '_s2_id',  // محصولاتی که به سایت ۲ منتقل شده‌اند
+                    'compare' => 'EXISTS'
+                ]
+            ]
+        ];
+        
+        // اگر category_ids وارد شده باشد
+        if (!empty($category_ids)) {
+            $args['tax_query'] = [
+                [
+                    'taxonomy' => 'product_cat',
+                    'field' => 'term_id',
+                    'terms' => array_map('intval', $category_ids)
+                ]
+            ];
+        }
+        
+        // اگر product_ids وارد شده باشد (اولویت دارد)
+        if (!empty($product_ids)) {
+            $args['post__in'] = array_map('intval', $product_ids);
+            unset($args['meta_query']); // حذف meta_query اگر product_ids وجود داشته باشد
+            // حذف category_ids filter اگر product_ids وجود داشته باشد
+            if (isset($args['tax_query'])) {
+                unset($args['tax_query']);
+            }
+        }
+        
+        $query = new WP_Query($args);
+        $product_ids_to_update = $query->posts;
+        
+        if (empty($product_ids_to_update)) {
+            wp_send_json_error([
+                'message' => 'محصولی برای تغییر قیمت پیدا نشد',
+                'count' => 0
+            ]);
+        }
+        
+        $transfer = PIE_Transfer::get_instance();
+        $updated_count = 0;
+        $failed_count = 0;
+        $errors = [];
+        
+        foreach ($product_ids_to_update as $product_id) {
+            try {
+                $product = wc_get_product($product_id);
+                
+                if (!$product) {
+                    $failed_count++;
+                    continue;
+                }
+                
+                // ساخت آرایه اطلاعات محصول
+                $product_data = [
+                    'name' => $product->get_name(),
+                    'type' => $product->get_type(),
+                    'regular_price' => $product->get_regular_price(),
+                    'sale_price' => $product->get_sale_price()
+                ];
+                
+                // برای محصولات متغیر
+                if ($product->is_type('variable')) {
+                    $variations = [];
+                    foreach ($product->get_children() as $variation_id) {
+                        $variation = wc_get_product($variation_id);
+                        if ($variation) {
+                            $variations[] = [
+                                'id' => $variation_id,
+                                'regular_price' => $variation->get_regular_price(),
+                                'sale_price' => $variation->get_sale_price()
+                            ];
+                        }
+                    }
+                    $product_data['variations'] = $variations;
+                }
+                
+                // اعمال افزایش قیمت
+                $updated_data = $transfer->apply_price_markup($product_data, $markup_percent);
+                
+                // به‌روزرسانی قیمت اصلی
+                if (isset($updated_data['regular_price']) && $updated_data['regular_price'] != $product->get_regular_price()) {
+                    $product->set_regular_price($updated_data['regular_price']);
+                }
+                
+                // به‌روزرسانی قیمت فروش
+                if (isset($updated_data['sale_price']) && $updated_data['sale_price'] != $product->get_sale_price()) {
+                    $product->set_sale_price($updated_data['sale_price']);
+                }
+                
+                $product->save();
+                
+                // برای محصولات متغیر
+                if ($product->is_type('variable') && isset($updated_data['variations'])) {
+                    foreach ($updated_data['variations'] as $variation_update) {
+                        $variation = wc_get_product($variation_update['id']);
+                        if ($variation) {
+                            if (isset($variation_update['regular_price'])) {
+                                $variation->set_regular_price($variation_update['regular_price']);
+                            }
+                            if (isset($variation_update['sale_price'])) {
+                                $variation->set_sale_price($variation_update['sale_price']);
+                            }
+                            $variation->save();
+                        }
+                    }
+                }
+                
+                $updated_count++;
+                error_log("[PIE] Updated price for product ID $product_id with $markup_percent% markup");
+                
+            } catch (Exception $e) {
+                $failed_count++;
+                $errors[] = "محصول ID $product_id: " . $e->getMessage();
+                error_log("[PIE] Error updating price for product ID $product_id: " . $e->getMessage());
+            }
+        }
+        
+        wp_send_json_success([
+            'message' => "{$updated_count} محصول به‌روزرسانی شد" . ($failed_count > 0 ? ", {$failed_count} ناموفق" : ''),
+            'updated' => $updated_count,
+            'failed' => $failed_count,
+            'errors' => $errors
+        ]);
+    }
+    
+    /**
      * ذخیره تنظیمات از طریق AJAX (برای مطمئن بودن)
      */
     public function ajax_save_settings() {
@@ -186,7 +336,10 @@ class PIE_Settings {
             'api_consumer_secret' => sanitize_text_field($_POST['api_consumer_secret'] ?? ''),
             'auto_upload' => isset($_POST['auto_upload']) ? 1 : 0,
             // ✅ مسئله ۲: جهت sync (دوطرفه، یک‌طرفه ۱→۲، یا یک‌طرفه ۲→۱)
-            'sync_direction' => sanitize_text_field($_POST['sync_direction'] ?? 'bidirectional')
+            'sync_direction' => sanitize_text_field($_POST['sync_direction'] ?? 'bidirectional'),
+            // ✅ افزایش قیمت درصدی
+            'price_markup_enabled' => isset($_POST['price_markup_enabled']) ? 1 : 0,
+            'price_markup_percent' => intval($_POST['price_markup_percent'] ?? 0)
         ];
         
         // update_option returns false if value is identical to existing (not an error)
@@ -447,6 +600,56 @@ class PIE_Settings {
                                     </td>
                                 </tr>
                                 
+                                <!-- ✅ افزایش قیمت درصدی -->
+                                <tr style="border-top: 2px solid #ddd;">
+                                    <th colspan="2" style="padding: 20px 0 10px;">
+                                        <h3 style="margin: 0;">💰 تنظیمات افزایش قیمت</h3>
+                                    </th>
+                                </tr>
+                                
+                                <tr>
+                                    <th scope="row">
+                                        <label for="price_markup_enabled">فعال‌سازی افزایش قیمت</label>
+                                    </th>
+                                    <td>
+                                        <label>
+                                            <input type="checkbox" 
+                                                   name="<?php echo esc_attr($this->option_key); ?>[price_markup_enabled]" 
+                                                   value="1" 
+                                                   <?php checked($config['price_markup_enabled'], 1); ?>>
+                                            <strong>فعال کردن افزایش قیمت درصدی هنگام انتقال محصول</strong>
+                                        </label>
+                                        <p class="description" style="margin-top: 10px;">
+                                            وقتی فعال باشد، قیمت محصولات در هنگام انتقال از سایت ۱ به سایت ۲ افزایش خواهد یافت.
+                                        </p>
+                                    </td>
+                                </tr>
+                                
+                                <tr>
+                                    <th scope="row">
+                                        <label for="price_markup_percent">درصد افزایش قیمت</label>
+                                    </th>
+                                    <td>
+                                        <div style="display: flex; align-items: center; gap: 10px;">
+                                            <input type="number" 
+                                                   id="price_markup_percent"
+                                                   name="<?php echo esc_attr($this->option_key); ?>[price_markup_percent]" 
+                                                   value="<?php echo intval($config['price_markup_percent']); ?>"
+                                                   class="small-text"
+                                                   placeholder="0"
+                                                   min="0"
+                                                   max="1000"
+                                                   style="width: 120px; padding: 8px;">
+                                            <span style="color: #666;">درصد</span>
+                                        </div>
+                                        <p class="description" style="margin-top: 10px;">
+                                            <strong>مثال:</strong><br>
+                                            اگر 20 را وارد کنید: قیمت $100 به $120 تبدیل می‌شود<br>
+                                            این درصد به قیمت اصلی، قیمت فروش، و تمام variations اعمال می‌شود.
+                                        </p>
+                                    </td>
+                                </tr>
+                                
                                 <tr style="border-top: 2px solid #ddd;">
                                     <th colspan="2" style="padding: 20px 0 10px;">
                                         <h3 style="margin: 0;">⚡ تنظیمات خودکار</h3>
@@ -475,6 +678,77 @@ class PIE_Settings {
                                         <p class="description" style="margin-top: 10px; color: #d63031;">
                                             ⚠️ اگر فعال نباشد، محصولات منتظر تأیید شما می‌مانند
                                         </p>
+                                    </td>
+                                </tr>
+                                
+                                <!-- ✅ تغییر قیمت محصولات موجود -->
+                                <tr style="border-top: 2px solid #ddd;">
+                                    <th colspan="2" style="padding: 20px 0 10px;">
+                                        <h3 style="margin: 0;">🔄 تغییر قیمت محصولات موجود</h3>
+                                    </th>
+                                </tr>
+                                
+                                <tr>
+                                    <th scope="row">
+                                        <label for="update_markup_percent">اعمال افزایش قیمت جدید</label>
+                                    </th>
+                                    <td>
+                                        <div style="background: #f0f8ff; border: 1px solid #b3d9ff; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
+                                            <p style="margin: 0 0 15px 0;">
+                                                <strong>⚡ می‌خواهید قیمت محصولاتی که قبلاً به سایت ۲ منتقل شده‌اند را تغییر دهید؟</strong>
+                                            </p>
+                                            
+                                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                                                <!-- درصد افزایش -->
+                                                <div>
+                                                    <label style="display: block; margin-bottom: 5px;">
+                                                        <strong>درصد افزایش قیمت:</strong>
+                                                    </label>
+                                                    <input type="number" 
+                                                           id="update_markup_percent"
+                                                           placeholder="مثال: 20"
+                                                           value="<?php echo intval($config['price_markup_percent']); ?>"
+                                                           min="0"
+                                                           max="1000"
+                                                           style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                                </div>
+                                                
+                                                <!-- نوع انتخاب -->
+                                                <div>
+                                                    <label style="display: block; margin-bottom: 5px;">
+                                                        <strong>محصولات کدام برای تغییر؟</strong>
+                                                    </label>
+                                                    <select id="update_selection_type" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                                        <option value="all">تمام محصولات منتقل‌شده</option>
+                                                        <option value="category">محصولات یک دسته‌بندی</option>
+                                                        <option value="manual">انتخاب دستی</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- نمایش پویا برای دسته‌بندی -->
+                                            <div id="category_selector" style="display: none; margin-bottom: 15px;">
+                                                <label style="display: block; margin-bottom: 5px;"><strong>دسته‌بندی را انتخاب کنید:</strong></label>
+                                                <div id="category_list" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px; background: white;">
+                                                    <?php
+                                                    $categories = get_terms(['taxonomy' => 'product_cat', 'hide_empty' => false]);
+                                                    if (!empty($categories)) {
+                                                        foreach ($categories as $cat) {
+                                                            echo '<label style="display: block; margin-bottom: 8px;">';
+                                                            echo '<input type="checkbox" class="category-checkbox" value="' . $cat->term_id . '">';
+                                                            echo ' ' . esc_html($cat->name);
+                                                            echo '</label>';
+                                                        }
+                                                    }
+                                                    ?>
+                                                </div>
+                                            </div>
+                                            
+                                            <button type="button" id="update-prices-btn" class="button button-primary" style="padding: 10px 20px; font-size: 14px;">
+                                                💾 اعمال تغییر قیمت
+                                            </button>
+                                            <span id="update-status" style="margin-right: 15px; display: none;"></span>
+                                        </div>
                                     </td>
                                 </tr>
                                 
@@ -655,6 +929,9 @@ class PIE_Settings {
                     api_consumer_secret: $('[name="pie_site_config[api_consumer_secret]"]').val(),
                     auto_upload: $('[name="pie_site_config[auto_upload]"]').is(':checked') ? 1 : 0,
                     sync_direction: $('input[name="pie_site_config[sync_direction]"]:checked').val() || 'bidirectional',
+                    // ✅ افزایش قیمت درصدی
+                    price_markup_enabled: $('[name="pie_site_config[price_markup_enabled]"]').is(':checked') ? 1 : 0,
+                    price_markup_percent: parseInt($('[name="pie_site_config[price_markup_percent]"]').val()) || 0,
                     nonce: $('[name="pie_nonce"]').val()
                 };
                 
@@ -740,6 +1017,80 @@ class PIE_Settings {
                     }
                 });
             });
+            
+            // ✅ تغییر قیمت محصولات موجود
+            $('#update_selection_type').on('change', function() {
+                if ($(this).val() === 'category') {
+                    $('#category_selector').show();
+                } else {
+                    $('#category_selector').hide();
+                }
+            });
+            
+            $('#update-prices-btn').on('click', function() {
+                const markup_percent = parseInt($('#update_markup_percent').val()) || 0;
+                const selection_type = $('#update_selection_type').val();
+                
+                if (markup_percent < 0 || markup_percent > 1000) {
+                    alert('درصد باید بین 0 و 1000 باشد');
+                    return;
+                }
+                
+                if (markup_percent === 0) {
+                    alert('درصد افزایش را وارد کنید (حداقل 0 یا بالاتر)');
+                    return;
+                }
+                
+                let category_ids = [];
+                if (selection_type === 'category') {
+                    category_ids = $('.category-checkbox:checked').map(function() {
+                        return $(this).val();
+                    }).get();
+                    
+                    if (category_ids.length === 0) {
+                        alert('حداقل یک دسته‌بندی را انتخاب کنید');
+                        return;
+                    }
+                }
+                
+                const $btn = $(this);
+                $btn.prop('disabled', true).text('⏳ درحال تغییر قیمت‌ها...');
+                
+                const data = {
+                    action: 'pie_update_existing_product_prices',
+                    markup_percent: markup_percent,
+                    category_ids: category_ids,
+                    nonce: $('[name="pie_nonce"]').val()
+                };
+                
+                $.ajax({
+                    type: 'POST',
+                    url: '<?php echo admin_url('admin-ajax.php'); ?>',
+                    data: data,
+                    success: function(response) {
+                        $btn.prop('disabled', false).text('💾 اعمال تغییر قیمت');
+                        
+                        if (response.success) {
+                            let msg = response.data.message;
+                            if (response.data.errors && response.data.errors.length > 0) {
+                                msg += '\n\nخطاها:\n' + response.data.errors.join('\n');
+                            }
+                            alert('✓ ' + msg);
+                            // بارگزاری مجدد صفحه
+                            setTimeout(() => {
+                                location.reload();
+                            }, 1500);
+                        } else {
+                            alert('✗ خطا: ' + response.data.message);
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $btn.prop('disabled', false).text('💾 اعمال تغییر قیمت');
+                        console.error('Error:', error);
+                        alert('خطای شبکه: ' + error);
+                    }
+                });
+            });
         });
         </script>
         <?php
@@ -758,7 +1109,10 @@ class PIE_Settings {
             'api_consumer_secret' => '',
             'auto_upload' => 0,
             // ✅ مسئله ۲: جهت sync پیش‌فرض
-            'sync_direction' => 'bidirectional'
+            'sync_direction' => 'bidirectional',
+            // ✅ افزایش قیمت درصدی - پیش‌فرض disabled
+            'price_markup_enabled' => 0,
+            'price_markup_percent' => 0
         ];
         
         $config = get_option($this->option_key, []);

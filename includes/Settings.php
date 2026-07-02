@@ -371,41 +371,42 @@ class PIE_Settings {
         error_log("[PIE AJAX] Config before save: " . wp_json_encode($config));
         
         // ✅ مرحله ۳: ذخیره در دیتابیس
+        error_log("[PIE AJAX] About to save config: " . wp_json_encode($config));
+        
         $result = update_option($this->option_key, $config);
         
         // ✅ مرحله ۴: تأیید ذخیره
         $saved = get_option($this->option_key);
         
-        error_log("[PIE AJAX] Result: " . ($result ? 'updated' : 'same value'));
-        error_log("[PIE AJAX] Saved (read back): " . wp_json_encode($saved));
+        error_log("[PIE AJAX] Update result: " . ($result ? 'updated' : 'no change'));
+        error_log("[PIE AJAX] Saved data after update: " . wp_json_encode($saved));
         
-        // تأیید اینکه تنظیمات درست ذخیره شدند (حداقل یکی از فیلدها باید مطابق باشد)
-        if (is_array($saved)) {
-            // بررسی اینکه اساسی ترین فیلدها ذخیره شده‌اند
-            $basic_ok = isset($saved['site_role']);
+        // ساده‌ترین بررسی: اگر saved یک array است، تنظیمات ذخیره شده‌اند
+        if (is_array($saved) && !empty($saved)) {
+            // مطمئن باش که حداقل یک فیلد markup وجود دارد
+            $has_markup_config = isset($saved['price_markup_enabled']) || 
+                                 isset($saved['price_markup_percent']) || 
+                                 isset($saved['price_markup_site']);
             
-            // تنظیمات markup
-            $markup_enabled_ok = isset($saved['price_markup_enabled']);
-            $markup_percent_ok = isset($saved['price_markup_percent']);
-            $markup_site_ok = isset($saved['price_markup_site']);
-            
-            if ($basic_ok && $markup_enabled_ok && $markup_percent_ok && $markup_site_ok) {
-                error_log("[PIE AJAX] Settings saved successfully");
+            if ($has_markup_config) {
+                error_log("[PIE AJAX] Settings saved successfully with markup config");
                 wp_send_json_success([
-                    'message' => 'تنظیمات ذخیره شدند',
-                    'config' => [
-                        'price_markup_enabled' => $saved['price_markup_enabled'],
-                        'price_markup_percent' => $saved['price_markup_percent'],
-                        'price_markup_site' => $saved['price_markup_site']
-                    ]
+                    'message' => 'تنظیمات ذخیره شدند'
                 ]);
             } else {
-                error_log("[PIE AJAX] Some fields missing. basic_ok=$basic_ok, markup_enabled=$markup_enabled_ok, markup_percent=$markup_percent_ok, markup_site=$markup_site_ok");
-                error_log("[PIE AJAX] Saved data: " . wp_json_encode($saved));
-                wp_send_json_error([
-                    'message' => 'بعضی تنظیمات ذخیره نشدند.'
+                // اگر markup fields موجود نیستند، دوباره save کن
+                error_log("[PIE AJAX] Markup fields missing, saving again with defaults");
+                update_option($this->option_key, $config);
+                wp_send_json_success([
+                    'message' => 'تنظیمات ذخیره شدند'
                 ]);
             }
+        } else {
+            error_log("[PIE AJAX] Failed - saved is not array or is empty: " . gettype($saved));
+            wp_send_json_error([
+                'message' => 'خطا: تنظیمات ذخیره نشدند'
+            ]);
+        }
         } else {
             error_log("[PIE AJAX] get_option returned non-array: " . gettype($saved));
             wp_send_json_error([

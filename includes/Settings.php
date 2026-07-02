@@ -186,7 +186,9 @@ class PIE_Settings {
             'api_consumer_secret' => sanitize_text_field($_POST['api_consumer_secret'] ?? ''),
             'auto_upload' => isset($_POST['auto_upload']) ? 1 : 0,
             // ✅ مسئله ۲: جهت sync (دوطرفه، یک‌طرفه ۱→۲، یا یک‌طرفه ۲→۱)
-            'sync_direction' => sanitize_text_field($_POST['sync_direction'] ?? 'bidirectional')
+            'sync_direction' => sanitize_text_field($_POST['sync_direction'] ?? 'bidirectional'),
+            // ✅ درصد افزایش قیمت هنگام انتقال به سایت ۲
+            'price_markup_percent' => floatval($_POST['price_markup_percent'] ?? 0)
         ];
         
         // update_option returns false if value is identical to existing (not an error)
@@ -200,7 +202,8 @@ class PIE_Settings {
         error_log("[PIE AJAX] Saved (read back): " . wp_json_encode($saved));
         
         // تأیید ذخیره با خواندن مستقیم از دیتابیس
-        if (is_array($saved) && isset($saved['sync_direction']) && $saved['sync_direction'] === $config['sync_direction']) {
+        if (is_array($saved) && isset($saved['sync_direction']) && $saved['sync_direction'] === $config['sync_direction'] &&
+            isset($saved['price_markup_percent']) && floatval($saved['price_markup_percent']) === floatval($config['price_markup_percent'])) {
             wp_send_json_success(['message' => 'تنظیمات ذخیره شدند']);
         } else {
             wp_send_json_error('خطا در ذخیره');
@@ -449,6 +452,40 @@ class PIE_Settings {
                                 
                                 <tr style="border-top: 2px solid #ddd;">
                                     <th colspan="2" style="padding: 20px 0 10px;">
+                                        <h3 style="margin: 0;">💰 تنظیمات قیمت</h3>
+                                    </th>
+                                </tr>
+                                
+                                <!-- درصد افزایش قیمت هنگام انتقال به سایت ۲ -->
+                                <tr>
+                                    <th scope="row">
+                                        <label for="price_markup_percent">📈 درصد افزایش قیمت در انتقال</label>
+                                    </th>
+                                    <td>
+                                        <fieldset style="display: flex; align-items: center; gap: 10px;">
+                                            <input type="number" 
+                                                   id="price_markup_percent"
+                                                   name="price_markup_percent" 
+                                                   value="<?php echo esc_attr($config['price_markup_percent'] ?? 0); ?>"
+                                                   min="0"
+                                                   max="100"
+                                                   step="0.01"
+                                                   style="width: 100px; padding: 8px; font-size: 14px; border: 1px solid #ddd; border-radius: 4px;">
+                                            <span style="font-size: 16px; font-weight: bold;">%</span>
+                                            <span style="color: #666; font-size: 13px; margin-right: 10px;">
+                                                (مثال: ۲۰ درصد)
+                                            </span>
+                                        </fieldset>
+                                        <p class="description" style="margin-top: 15px;">
+                                            این درصد هنگام انتقال محصولات از سایت ۱ به سایت ۲ به قیمت‌های تمام محصولات افزوده می‌شود.<br>
+                                            <strong>مثال:</strong> قیمت ۱۰۰,۰۰۰ تومان + ۲۰% = ۱۲۰,۰۰۰ تومان<br>
+                                            <em style="color: #d63031;">برای غیرفعال کردن، مقدار را ۰ تنظیم کنید</em>
+                                        </p>
+                                    </td>
+                                </tr>
+                                
+                                <tr style="border-top: 2px solid #ddd;">
+                                    <th colspan="2" style="padding: 20px 0 10px;">
                                         <h3 style="margin: 0;">⚡ تنظیمات خودکار</h3>
                                     </th>
                                 </tr>
@@ -655,6 +692,7 @@ class PIE_Settings {
                     api_consumer_secret: $('[name="pie_site_config[api_consumer_secret]"]').val(),
                     auto_upload: $('[name="pie_site_config[auto_upload]"]').is(':checked') ? 1 : 0,
                     sync_direction: $('input[name="pie_site_config[sync_direction]"]:checked').val() || 'bidirectional',
+                    price_markup_percent: $('[name="price_markup_percent"]').val() || 0,
                     nonce: $('[name="pie_nonce"]').val()
                 };
                 
@@ -758,7 +796,9 @@ class PIE_Settings {
             'api_consumer_secret' => '',
             'auto_upload' => 0,
             // ✅ مسئله ۲: جهت sync پیش‌فرض
-            'sync_direction' => 'bidirectional'
+            'sync_direction' => 'bidirectional',
+            // ✅ درصد افزایش قیمت پیش‌فرض (0 = غیرفعال)
+            'price_markup_percent' => 0
         ];
         
         $config = get_option($this->option_key, []);

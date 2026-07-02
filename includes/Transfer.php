@@ -30,6 +30,8 @@ class PIE_Transfer {
         add_action('wp_ajax_pie_pending_products', [$this, 'handle_pending_products']);
         add_action('wp_ajax_pie_approve_upload', [$this, 'handle_approve_upload']);
         add_action('wp_ajax_pie_confirm_preview', [$this, 'handle_confirm_preview']);
+        // ✅ درصد افزایش قیمت
+        add_action('wp_ajax_pie_preview_price_markup', [$this, 'handle_preview_price_markup']);
     }
     
     /**
@@ -158,7 +160,7 @@ class PIE_Transfer {
                 $s1_variation = wc_get_product($s1_var_id);
                 if (!$s1_variation) continue;
 
-                // روش ۱: کلید دقیق id_<s1_variation_id>
+                // روش ۱: کلی�� دقیق id_<s1_variation_id>
                 $s2_var_id = $s2_variation_ids['id_' . $s1_var_id] ?? null;
 
                 // روش ۲ (fallback): تطبیق بر اساس SKU
@@ -318,6 +320,15 @@ class PIE_Transfer {
             $product_data = $plugin->get_products_for_export_public([$product_id]);
             if (empty($product_data)) {
                 return ['success' => false, 'error' => 'داده محصول خالی است', 'error_code' => 'EMPTY_EXPORT'];
+            }
+            
+            // ✅ اعمال درصد افزایش قیمت (اگر تنظیم شده باشد)
+            $markup_percent = floatval($config['price_markup_percent'] ?? 0);
+            if ($markup_percent > 0) {
+                foreach ($product_data as &$prod) {
+                    $prod = $this->apply_markup_to_product_data($prod, $markup_percent);
+                }
+                error_log("[PIE] Price markup applied: {$markup_percent}% for product {$product_id}");
             }
             
             // URL Endpoint - استفاده از preview برای نمایش کاربر
@@ -795,6 +806,118 @@ class PIE_Transfer {
             $this->logging->log('preview_confirm', 'failed', "خطا: {$result['error']}");
             wp_send_json_error($result['error']);
         }
+    }
+    
+    /**
+     * ✅ محاسبه و پیش‌نمایش درصد افزایش قیمت
+     * Preview price markup before sending to site 2
+     */
+    public function handle_preview_price_markup() {
+        check_ajax_referer('pie_nonce', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error('شما دسترسی ندارید');
+        }
+        
+        $config = $this->settings->get_config();
+        
+        if ($config['site_role'] !== 'site1') {
+            wp_send_json_error('این عملیات فقط برای سایت ۱ در دسترس است');
+        }
+        
+        $product_ids = isset($_POST['product_ids']) ? explode(',', sanitize_text_field($_POST['product_ids'])) : [];
+        $product_ids = array_map('intval', array_filter($product_ids));
+        
+        if (empty($product_ids)) {
+            wp_send_json_error('محصولی انتخاب نشده است');
+        }
+        
+        $markup_percent = floatval($config['price_markup_percent'] ?? 0);
+        
+        if ($markup_percent <= 0) {
+            wp_send_json_error('درصد افزایش قیمت تنظیم نشده است');
+        }
+        
+        $price_data = [];
+        
+        foreach ($product_ids as $product_id) {
+            $product = wc_get_product($product_id);
+            if (!$product) {
+                continue;
+            }
+            
+            $original_price = floatval($product->get_price());
+            $new_price = $this->apply_price_markup($original_price, $markup_percent);
+            
+            $price_data[] = [
+                'product_id' => $product_id,
+                'product_name' => $product->get_name(),
+                'original_price' => $original_price,
+                'new_price' => $new_price,
+                'markup_percent' => $markup_percent
+            ];
+        }
+        
+        if (empty($price_data)) {
+            wp_send_json_error('محصولی برای نمایش قیمت پیدا نشد');
+        }
+        
+        wp_send_json_success([
+            'price_data' => $price_data,
+            'markup_percent' => $markup_percent,
+            'message' => count($price_data) . ' محصول برای پیش‌نمایش آماده است'
+        ]);
+    }
+    
+    /**
+     * ✅ محاسبه قیمت با درصد افزایش
+     * Apply price markup percentage to a price
+     */
+    private function apply_price_markup($price, $markup_percent) {
+        if ($markup_percent <= 0) {
+            return $price;
+        }
+        return floatval($price) * (1 + ($markup_percent / 100));
+    }
+    
+    /**
+     * ✅ اعمال درصد افزایش به کل داده محصول
+     * Apply price markup to entire product data array
+     */
+    private function apply_markup_to_product_data(&$product_data, $markup_percent) {
+        if ($markup_percent <= 0 || !is_array($product_data)) {
+            return $product_data;
+        }
+        
+        // اعمال درصد به قیمت‌های اصلی
+        if (isset($product_data['price'])) {
+            $product_data['price'] = $this->apply_price_markup(floatval($product_data['price']), $markup_percent);
+        }
+        
+        if (isset($product_data['regular_price'])) {
+            $product_data['regular_price'] = $this->apply_price_markup(floatval($product_data['regular_price']), $markup_percent);
+        }
+        
+        if (isset($product_data['sale_price']) && $product_data['sale_price']) {
+            $product_data['sale_price'] = $this->apply_price_markup(floatval($product_data['sale_price']), $markup_percent);
+        }
+        
+        // اعمال درصد به قیمت‌های variations (متغیرها)
+        if (isset($product_data['variations']) && is_array($product_data['variations'])) {
+            foreach ($product_data['variations'] as &$variation) {
+                if (isset($variation['price'])) {
+                    $variation['price'] = $this->apply_price_markup(floatval($variation['price']), $markup_percent);
+                }
+                if (isset($variation['regular_price'])) {
+                    $variation['regular_price'] = $this->apply_price_markup(floatval($variation['regular_price']), $markup_percent);
+                }
+                if (isset($variation['sale_price']) && $variation['sale_price']) {
+                    $variation['sale_price'] = $this->apply_price_markup(floatval($variation['sale_price']), $markup_percent);
+                }
+            }
+        }
+        
+        return $product_data;
     }
 }
 

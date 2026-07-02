@@ -184,6 +184,32 @@ class Product_Import_Export {
                             🚀 ارسال محصولات
                         </button>
                         <span id="send-direct-status" style="display: block; margin-top: 10px; text-align: center; font-size: 13px;"></span>
+                        
+                        <!-- ✅ Dialog پیش‌نمایش درصد افزایش قیمت -->
+                        <div id="price-markup-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center;">
+                            <div style="background: white; border-radius: 8px; padding: 30px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 5px 15px rgba(0,0,0,0.3);">
+                                <h2 style="margin-top: 0; color: #2c3e50; text-align: center;">💰 پیش‌نمایش افزایش قیمت</h2>
+                                
+                                <div style="background: #fff3e0; border-right: 4px solid #ff9800; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
+                                    <p style="margin: 0; color: #e65100;">
+                                        <strong id="markup-info"></strong>
+                                    </p>
+                                </div>
+                                
+                                <div id="price-markup-list" style="margin: 20px 0; max-height: 300px; overflow-y: auto;">
+                                    <!-- قائمه قیمت‌ها در اینجا نمایش داده می‌شود -->
+                                </div>
+                                
+                                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                                    <button type="button" id="confirm-markup-btn" class="button button-primary" style="flex: 1; padding: 10px; background: #4caf50; border-color: #2e7d32;">
+                                        ✓ اعمال و ارسال
+                                    </button>
+                                    <button type="button" id="cancel-markup-btn" class="button" style="flex: 1; padding: 10px;">
+                                        ✗ لغو
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     
                     <div style="border: 1px solid #ddd; padding: 20px; border-radius: 5px; background: #fafafa;">
@@ -402,6 +428,73 @@ class Product_Import_Export {
                 });
             });
             
+            // ✅ متغیرهای global برای ذخیره product IDs و pend کردن ارسال
+            let pendingSendIds = [];
+            
+            // ✅ Preview قیمت‌ها قبل از ارسال
+            function showPriceMarkupPreview(selectedIds) {
+                const ajaxUrl = '<?php echo admin_url('admin-ajax.php'); ?>';
+                const nonce = '<?php echo wp_create_nonce('pie_nonce'); ?>';
+                
+                $.ajax({
+                    type: 'POST',
+                    url: ajaxUrl,
+                    data: {
+                        action: 'pie_preview_price_markup',
+                        product_ids: selectedIds.join(','),
+                        nonce: nonce
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            const priceData = response.data.price_data;
+                            const markupPercent = response.data.markup_percent;
+                            
+                            // نمایش اطلاعات درصد
+                            $('#markup-info').text('درصد افزایش: ' + markupPercent + '%');
+                            
+                            // نمایش قائمه قیمت‌ها
+                            let html = '';
+                            priceData.forEach(item => {
+                                const increase = item.new_price - item.original_price;
+                                html += `
+                                    <div style="background: #f5f5f5; border: 1px solid #ddd; padding: 12px; margin-bottom: 10px; border-radius: 4px;">
+                                        <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px;">
+                                            ${item.product_name}
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
+                                            <div>
+                                                <span style="color: #666;">قیمت اصلی:</span>
+                                                <span style="color: #f44336; font-weight: bold; margin-right: 5px;">${item.original_price.toLocaleString()}</span>
+                                            </div>
+                                            <div style="color: #4caf50; font-weight: bold;">
+                                                ↖ +${increase.toFixed(2).toLocaleString()}
+                                            </div>
+                                            <div>
+                                                <span style="color: #666;">قیمت جدید:</span>
+                                                <span style="color: #4caf50; font-weight: bold; margin-right: 5px;">${item.new_price.toLocaleString()}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            });
+                            
+                            $('#price-markup-list').html(html);
+                            $('#price-markup-modal').css('display', 'flex');
+                            
+                            // ذخیره IDs برای استفاده بعدی
+                            pendingSendIds = selectedIds;
+                        } else {
+                            alert('خطا: ' + response.data);
+                            $('#send-direct-btn').prop('disabled', false);
+                        }
+                    },
+                    error: function() {
+                        alert('خطای شبکه هنگام بارگذاری اطلاعات قیمت');
+                        $('#send-direct-btn').prop('disabled', false);
+                    }
+                });
+            }
+            
             // دکمه ارسال مستقیم - سایت ۱ محصول را به صف تأیید سایت ۲ می‌فرستد
             $('#send-direct-btn').on('click', function() {
                 const selectedIds = [];
@@ -415,7 +508,14 @@ class Product_Import_Export {
                 }
                 
                 $(this).prop('disabled', true);
+                
+                // ✅ نمایش preview قیمت
+                showPriceMarkupPreview(selectedIds);
 
+            });
+            
+            // ✅ تابع برای ارسال محصولات (بعد از تأیید dialog)
+            function startSendingProducts(selectedIds) {
                 const total = selectedIds.length;
                 let completed = 0;
                 let failed = 0;
@@ -431,13 +531,12 @@ class Product_Import_Export {
                     );
                 }
 
-                // ارسال یک محصول با حداکثر دو تلاش (تلاش مجدد در صورت خطای شبکه)
+                // ارسال یک محصول با حداکثر دو تلاش
                 function sendOne(productId, attempt) {
                     attempt = attempt || 1;
                     return $.ajax({
                         type: 'POST',
                         url: ajaxUrl,
-                        // هر محصول ممکن است تا ۱۲۰ ثانیه در سرور طول بکشد (عکس/متغیر سنگین)
                         timeout: 130000,
                         data: {
                             action: 'pie_send_products',
@@ -450,7 +549,6 @@ class Product_Import_Export {
                         }
                         return false;
                     }, function() {
-                        // خطای شبکه/تایم‌اوت → یک بار دیگر تلاش کن
                         if (attempt < 2) {
                             return sendOne(productId, attempt + 1);
                         }
@@ -458,7 +556,7 @@ class Product_Import_Export {
                     });
                 }
 
-                // ارسال پشت‌سرهم (نه موازی) تا سرور و همگام‌سازی موجودی دچار اختلال نشود
+                // ارسال پشت‌سرهم
                 function processNext(i) {
                     if (i >= total) {
                         $('#send-direct-btn').prop('disabled', false);
@@ -479,12 +577,34 @@ class Product_Import_Export {
                             failed++;
                             failedIds.push(selectedIds[i]);
                         }
-                        // مکث کوتاه بین هر ارسال تا فشار روی هاست کم شود
                         setTimeout(function() { processNext(i + 1); }, 400);
                     });
                 }
 
                 processNext(0);
+            }
+            
+            // ✅ دکمه تأیید dialog
+            $('#confirm-markup-btn').on('click', function() {
+                $('#price-markup-modal').css('display', 'none');
+                $('#send-direct-status').html('<span style="color: #1976d2;">شروع ارسال...</span>');
+                startSendingProducts(pendingSendIds);
+            });
+            
+            // ✅ دکمه لغو dialog
+            $('#cancel-markup-btn').on('click', function() {
+                $('#price-markup-modal').css('display', 'none');
+                $('#send-direct-btn').prop('disabled', false);
+                $('#send-direct-status').html('');
+            });
+            
+            // ✅ بستن modal با کلیک خارج از آن
+            $('#price-markup-modal').on('click', function(e) {
+                if (e.target === this) {
+                    $(this).css('display', 'none');
+                    $('#send-direct-btn').prop('disabled', false);
+                    $('#send-direct-status').html('');
+                }
             });
             
             function updateSelectedCount() {

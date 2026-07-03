@@ -816,9 +816,30 @@ class Product_Import_Export {
     private function get_products_for_export($product_ids) {
         $products = [];
         
+        // ✅ دریافت درصد افزایش قیمت از تنظیمات
+        $settings = PIE_Settings::get_instance();
+        $config = $settings->get_config();
+        $price_increase_percent = floatval($config['price_increase_percent'] ?? 0);
+        
         foreach ($product_ids as $product_id) {
             $product = wc_get_product($product_id);
             if (!$product) continue;
+            
+            // ✅ محاسبه قیمت‌های جدید با اعمال درصد افزایش
+            $orig_price         = floatval($product->get_price());
+            $orig_regular_price = floatval($product->get_regular_price());
+            $orig_sale_price    = $product->get_sale_price();
+            
+            $multiplier         = 1 + ($price_increase_percent / 100);
+            $new_price          = $orig_price > 0         ? $orig_price * $multiplier         : $orig_price;
+            $new_regular_price  = $orig_regular_price > 0 ? $orig_regular_price * $multiplier : $orig_regular_price;
+            $new_sale_price     = ($orig_sale_price !== '' && $orig_sale_price !== null && floatval($orig_sale_price) > 0)
+                                    ? floatval($orig_sale_price) * $multiplier
+                                    : $orig_sale_price;
+            
+            if ($price_increase_percent > 0) {
+                error_log("[PIE Export] Price increase {$price_increase_percent}% applied to product {$product_id}: regular {$orig_regular_price} → {$new_regular_price}");
+            }
             
             $product_data = [
                 '_s1_id'          => $product->get_id(), // ID محصول در سایت ۱ — برای auto-mapping دقیق هنگام آپلود دستی
@@ -826,9 +847,9 @@ class Product_Import_Export {
                 'sku'             => $product->get_sku(),
                 'description'     => $product->get_description(),
                 'short_description' => $product->get_short_description(),
-                'price'           => $product->get_price(),
-                'regular_price'   => $product->get_regular_price(),
-                'sale_price'      => $product->get_sale_price(),
+                'price'           => $new_price,
+                'regular_price'   => $new_regular_price,
+                'sale_price'      => $new_sale_price,
                 'stock_quantity'  => $product->get_stock_quantity(),
                 'manage_stock'    => $product->get_manage_stock(),
                 'type'            => $product->get_type(),
@@ -921,11 +942,17 @@ class Product_Import_Export {
                         $variation = new WC_Product_Variation($variation);
                     }
                     
+                    // ✅ اعمال افزایش قیمت روی هر variation
+                    $var_orig_price    = floatval($variation->get_price());
+                    $var_orig_regular  = floatval($variation->get_regular_price());
+                    $var_new_price     = $var_orig_price   > 0 ? $var_orig_price   * $multiplier : $var_orig_price;
+                    $var_new_regular   = $var_orig_regular > 0 ? $var_orig_regular * $multiplier : $var_orig_regular;
+                    
                     $var_data = [
                         '_s1_id'         => $variation->get_id(), // ID سایت ۱ — برای auto-mapping دقیق
                         'sku'            => $variation->get_sku() ?: '',
-                        'price'          => $variation->get_price() ? (string)$variation->get_price() : '0',
-                        'regular_price'  => $variation->get_regular_price() ? (string)$variation->get_regular_price() : '0',
+                        'price'          => $var_new_price   > 0 ? (string)$var_new_price   : '0',
+                        'regular_price'  => $var_new_regular > 0 ? (string)$var_new_regular : '0',
                         'stock_quantity' => (int)($variation->get_stock_quantity() ?: 0),
                         'attributes'     => [],
                     ];

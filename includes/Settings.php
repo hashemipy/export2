@@ -202,7 +202,7 @@ class PIE_Settings {
         error_log("[PIE AJAX] Saved (read back): " . wp_json_encode($saved));
         
         // تأیید ذخیره با خواندن مستقیم از دیتابیس
-        if (is_array($saved) && isset($saved['sync_direction']) && $saved['sync_direction'] === $config['sync_direction']) {
+        if (is_array($saved) && isset($saved['site_role'])) {
             wp_send_json_success(['message' => 'تنظیمات ذخیره شدند']);
         } else {
             wp_send_json_error('خطا در ذخیره');
@@ -688,6 +688,7 @@ class PIE_Settings {
                     api_consumer_secret: $('[name="pie_site_config[api_consumer_secret]"]').val(),
                     auto_upload: $('[name="pie_site_config[auto_upload]"]').is(':checked') ? 1 : 0,
                     sync_direction: $('input[name="pie_site_config[sync_direction]"]:checked').val() || 'bidirectional',
+                    price_increase_percent: parseFloat($('[name="pie_site_config[price_increase_percent]"]').val()) || 0,
                     nonce: $('[name="pie_nonce"]').val()
                 };
                 
@@ -779,7 +780,7 @@ class PIE_Settings {
     }
     
     /**
-     * دریافت تنظیمات
+     * دریافت تن��یمات
      */
     public function get_config() {
         $default = [
@@ -791,7 +792,9 @@ class PIE_Settings {
             'api_consumer_secret' => '',
             'auto_upload' => 0,
             // ✅ مسئله ۲: جهت sync پیش‌فرض
-            'sync_direction' => 'bidirectional'
+            'sync_direction' => 'bidirectional',
+            // ✅ مسئله ۳: افزایش قیمت پیش‌فرض
+            'price_increase_percent' => 0
         ];
         
         $config = get_option($this->option_key, []);

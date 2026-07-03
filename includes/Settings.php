@@ -186,7 +186,9 @@ class PIE_Settings {
             'api_consumer_secret' => sanitize_text_field($_POST['api_consumer_secret'] ?? ''),
             'auto_upload' => isset($_POST['auto_upload']) ? 1 : 0,
             // ✅ مسئله ۲: جهت sync (دوطرفه، یک‌طرفه ۱→۲، یا یک‌طرفه ۲→۱)
-            'sync_direction' => sanitize_text_field($_POST['sync_direction'] ?? 'bidirectional')
+            'sync_direction' => sanitize_text_field($_POST['sync_direction'] ?? 'bidirectional'),
+            // ✅ مسئله ۳: افزایش قیمت (درصد)
+            'price_increase_percent' => floatval($_POST['price_increase_percent'] ?? 0)
         ];
         
         // update_option returns false if value is identical to existing (not an error)
@@ -474,6 +476,37 @@ class PIE_Settings {
                                         </fieldset>
                                         <p class="description" style="margin-top: 10px; color: #d63031;">
                                             ⚠️ اگر فعال نباشد، محصولات منتظر تأیید شما می‌مانند
+                                        </p>
+                                    </td>
+                                </tr>
+                                
+                                <!-- ✅ مسئله ۳: افزایش قیمت -->
+                                <tr style="border-top: 2px solid #ddd;">
+                                    <th colspan="2" style="padding: 20px 0 10px;">
+                                        <h3 style="margin: 0;">💰 تنظیمات قیمت‌گذاری</h3>
+                                    </th>
+                                </tr>
+                                
+                                <tr>
+                                    <th scope="row">
+                                        <label for="price_increase_percent">📈 افزایش درصدی قیمت</label>
+                                    </th>
+                                    <td>
+                                        <input type="number" 
+                                               id="price_increase_percent"
+                                               name="<?php echo esc_attr($this->option_key); ?>[price_increase_percent]" 
+                                               value="<?php echo esc_attr($config['price_increase_percent'] ?? 0); ?>"
+                                               class="regular-text"
+                                               min="0"
+                                               max="100"
+                                               step="0.1"
+                                               style="width: 150px;"
+                                               placeholder="0">
+                                        <span style="margin-right: 10px; color: #666; font-weight: 500;">درصد</span>
+                                        <p class="description" style="margin-top: 10px;">
+                                            قیمت محصولات به هنگام ارسال به سایت مقابل با این درصد افزایش می‌یابد<br>
+                                            <strong>مثال:</strong> اگر قیمت ۱۰۰۰ تومان و افزایش ۱۰٪ باشد، قیمت جدید ۱۱۰۰ تومان می‌شود<br>
+                                            <strong>۰ = بدون افزایش</strong>
                                         </p>
                                     </td>
                                 </tr>
@@ -785,6 +818,8 @@ class PIE_Settings {
             'api_consumer_secret' => !empty($input['api_consumer_secret']) ? sanitize_text_field($input['api_consumer_secret']) : $current['api_consumer_secret'],
             'auto_upload' => isset($input['auto_upload']) ? 1 : 0,
             'sync_direction' => in_array($input['sync_direction'] ?? '', ['bidirectional', 's1_to_s2', 's2_to_s1']) ? $input['sync_direction'] : ($current['sync_direction'] ?? 'bidirectional'),
+            // ✅ مسئله ۳: افزایش قیمت (تنها مقادیر 0-100 پذیرفته می‌شوند)
+            'price_increase_percent' => max(0, min(100, floatval($input['price_increase_percent'] ?? 0))),
         ];
         
         error_log("[PIE] Settings saved: " . wp_json_encode($sanitized));

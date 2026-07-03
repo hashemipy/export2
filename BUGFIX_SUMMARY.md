@@ -59,7 +59,56 @@ if ($sync_direction === 's1_to_s2' && $direction === 's2_to_s1') {
 
 ---
 
-## ✅ مسئله ۳: Duplicate Mapping در آپلود دستی
+## ✅ مسئله ۳ (اضافی): افزایش درصدی قیمت محصولات
+
+### مشکل
+- هنگام ارسال محصولات از سایت ۱ به سایت ۲، قیمت‌ها یکسان باقی می‌مانند
+- کاربر نمی‌تواند برای هر محصول قیمت مختلفی تعیین کند (مثلاً ۱۰% افزایش)
+
+### حل
+
+#### 1️⃣ **Settings.php - تنظیم جدید** (خط 180-191)
+اضافه کردن تنظیم `price_increase_percent`:
+```php
+'price_increase_percent' => floatval($_POST['price_increase_percent'] ?? 0)
+```
+
+#### 2️⃣ **Settings.php - فیلد UI** (خط 483-513)
+اضافه کردن فیلد number برای درصد افزایش:
+- نام: "📈 افزایش درصدی قیمت"
+- محدوده: 0 تا 100
+- نمونه: ۱۰% افزایش → قیمت ۱۰۰۰ تومان = ۱۱۰۰ تومان
+
+#### 3️⃣ **Settings.php - sanitize_settings** (خط 821-822)
+```php
+'price_increase_percent' => max(0, min(100, floatval($input['price_increase_percent'] ?? 0))),
+```
+
+#### 4️⃣ **Transfer.php - متد helper** (خط 36-55)
+```php
+private function apply_price_increase($price, $percent = 0) {
+    // فرمول: new_price = old_price × (1 + percent/100)
+    return $price * (1 + $percent / 100);
+}
+```
+
+#### 5️⃣ **Transfer.php - apply in prepare_product_data** (خط 464-482)
+- محاسبه قیمت جدید برای محصولات ساده
+- محاسبه قیمت جدید برای `regular_price` و `sale_price`
+
+#### 6️⃣ **Transfer.php - apply in variations** (خط 543-558)
+- محاسبه قیمت جدید برای هر variation
+- پشتیبانی از `regular_price` و `sale_price` برای variations
+
+### نتیجه
+- قیمت‌ها به هنگام ارسال محصولات افزایش می‌یابند
+- تمام نوع محصولات پشتیبانی می‌شود (ساده و متغیر)
+- درصد افزایش در تنظیمات قابل تغییر است
+- مثال: ۱۰% افزایش → 100 تومان = 110 تومان
+
+---
+
+## ✅ مسئله ۴: Duplicate Mapping در آپلود دستی
 
 ### مشکل
 - هنگام آپلود دستی محصول، mapping دو بار ثبت می‌شود

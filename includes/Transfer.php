@@ -33,6 +33,26 @@ class PIE_Transfer {
     }
     
     /**
+     * ✅ مسئله ۳: اعمال افزایش درصدی قیمت
+     * Calculate price with percentage increase
+     * @param float $price اصلی
+     * @param float $percent درصد افزایش (0-100)
+     * @return float قیمت جدید
+     */
+    private function apply_price_increase($price, $percent = 0) {
+        if (!is_numeric($price) || $price < 0) {
+            return 0;
+        }
+        
+        if (!is_numeric($percent) || $percent < 0 || $percent > 100) {
+            $percent = 0;
+        }
+        
+        // فرمول: new_price = old_price × (1 + percent/100)
+        return $price * (1 + $percent / 100);
+    }
+    
+    /**
      * ارسال محصولات به سایت دیگر
      */
     public function handle_send_products() {
@@ -158,7 +178,7 @@ class PIE_Transfer {
                 $s1_variation = wc_get_product($s1_var_id);
                 if (!$s1_variation) continue;
 
-                // روش ۱: کلید دقیق id_<s1_variation_id>
+                // روش ۱: کلی�� دقیق id_<s1_variation_id>
                 $s2_var_id = $s2_variation_ids['id_' . $s1_var_id] ?? null;
 
                 // روش ۲ (fallback): تطبیق بر اساس SKU
@@ -441,13 +461,27 @@ class PIE_Transfer {
      * تهیه داده‌های محصول
      */
     private function prepare_product_data($product) {
+        // ✅ دریافت درصد افزایش قیمت
+        $config = $this->settings->get_config();
+        $price_increase = floatval($config['price_increase_percent'] ?? 0);
+        
+        // محاسبه قیمت های جدید با افزایش
+        $new_regular_price = $this->apply_price_increase($product->get_regular_price(), $price_increase);
+        $new_sale_price = $product->get_sale_price() ? $this->apply_price_increase($product->get_sale_price(), $price_increase) : '';
+        $new_price = $this->apply_price_increase($product->get_price(), $price_increase);
+        
+        // لاگ کردن افزایش قیمت برای تصحیح و بررسی
+        if ($price_increase > 0) {
+            error_log("[PIE] Price increase applied: {$price_increase}% | Old price: {$product->get_regular_price()} → New price: {$new_regular_price}");
+        }
+        
         $data = [
             'name' => $product->get_name(),
             'description' => $product->get_description(),
             'short_description' => $product->get_short_description(),
-            'price' => $product->get_price(),
-            'regular_price' => $product->get_regular_price(),
-            'sale_price' => $product->get_sale_price(),
+            'price' => $new_price,
+            'regular_price' => $new_regular_price,
+            'sale_price' => $new_sale_price,
             'sku' => $product->get_sku(),
             'stock_quantity' => $product->get_stock_quantity(),
             'manage_stock' => $product->get_manage_stock(),
@@ -511,14 +545,19 @@ class PIE_Transfer {
                 }
             }
             
-            // ⭐ variations
+            // ⭐ variations (با افزایش قیمت)
             $data['variations'] = [];
             foreach ($product->get_children() as $variation_id) {
                 $variation = wc_get_product($variation_id);
+                $var_regular_price = $this->apply_price_increase($variation->get_regular_price(), $price_increase);
+                $var_sale_price = $variation->get_sale_price() ? $this->apply_price_increase($variation->get_sale_price(), $price_increase) : '';
+                $var_price = $this->apply_price_increase($variation->get_price(), $price_increase);
+                
                 $data['variations'][] = [
                     'sku' => $variation->get_sku(),
-                    'price' => $variation->get_price(),
-                    'regular_price' => $variation->get_regular_price(),
+                    'price' => $var_price,
+                    'regular_price' => $var_regular_price,
+                    'sale_price' => $var_sale_price,
                     'stock_quantity' => $variation->get_stock_quantity(),
                     'attributes' => $variation->get_attributes()
                 ];
@@ -697,7 +736,16 @@ class PIE_Transfer {
                 $variation = new WC_Product_Variation();
                 $variation->set_parent_id($product_id);
                 $variation->set_sku($var_data['sku'] ?? '');
-                $variation->set_regular_price($var_data['price'] ?? 0);
+                
+                // ✅ تنظیم قیمت ها (از داده های آماده شده که در آنها افزایش اعمال شده)
+                $regular_price = $var_data['regular_price'] ?? $var_data['price'] ?? 0;
+                $sale_price = $var_data['sale_price'] ?? '';
+                
+                $variation->set_regular_price($regular_price);
+                if (!empty($sale_price)) {
+                    $variation->set_sale_price($sale_price);
+                }
+                
                 $variation->set_stock_quantity($var_data['stock_quantity'] ?? 0);
                 
                 // تنظیم attributes
